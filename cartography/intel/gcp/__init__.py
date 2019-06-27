@@ -1,6 +1,7 @@
 from oauth2client.client import GoogleCredentials, ApplicationDefaultCredentialsError
 import googleapiclient.discovery
 import logging
+import json
 from collections import namedtuple
 
 from cartography.intel.gcp import crm, compute
@@ -122,8 +123,76 @@ def start_gcp_crm_ingestion(session, config, credentials):
 
 
 def start_gcp_cai_ingestion(session, config, credentials):
-    print("Cool", config)
+    projects = []
+    folders = []
+    organizations = []
+    instances = []
+    networks = []
+    subnets = []
+    firewall_rules = []
 
+    lookup_table = {
+        "cloudresourcemanager.googleapis.com/Organization": organizations.append,
+        "cloudresourcemanager.googleapis.com/Folder": folders.append,
+        "cloudresourcemanager.googleapis.com/Project": projects.append,
+        "compute.googleapis.com/Instance": instances.append,
+        "compute.googleapis.com/Network": networks.append,
+        "compute.googleapis.com/Subnetwork": subnets.append,
+        "compute.googleapis.com/Firewall": firewall_rules.append,
+    }
+
+    with open(config.cai_dump_file) as cai_dump:
+        for entry_raw in cai_dump:
+            entry = json.loads(entry_raw)
+            asset_type = entry.get("asset_type")
+            if asset_type in lookup_table:
+                data = entry.get("resource").get("data")
+                lookup_table[asset_type](data)
+
+
+
+    common_job_parameters = {
+        "UPDATE_TAG": config.update_tag,
+    }
+
+    crm.load_gcp_organizations(session, organizations, config.update_tag)
+    crm.cleanup_gcp_organizations(session, common_job_parameters)
+
+    crm.load_gcp_folders(session, folders, config.update_tag)
+    crm.cleanup_gcp_folders(session, common_job_parameters)
+
+    crm.load_gcp_projects(session, projects, config.update_tag)
+    crm.cleanup_gcp_projects(session, common_job_parameters)
+
+    def convert(arr, fun, single=False):
+        # return array of { "id": "..", "items": [...] }
+        res = []
+        for item in arr:
+            obj = {
+                "id": item["selfLink"][item["selfLink"].find("projects/"):],
+                "items": [item]
+            }
+            if single:
+                res.extend(fun(obj))
+            else:
+                res.append(obj)
+
+        if not single:
+            return fun(res)
+        return res
+
+
+    compute.load_gcp_instances(session, convert(instances, compute.transform_gcp_instances), config.update_tag)
+    compute.cleanup_gcp_instances(session, common_job_parameters)
+
+    compute.load_gcp_vpcs(session, convert(networks, compute.transform_gcp_vpcs, single=True), config.update_tag)
+    compute.cleanup_gcp_vpcs(session, common_job_parameters)
+
+    compute.load_gcp_subnets(session, convert(subnets, compute.transform_gcp_subnets, single=True), config.update_tag)
+    compute.cleanup_gcp_subnets(session, common_job_parameters)
+
+    compute.load_gcp_ingress_firewalls(session, convert(firewall_rules, compute.transform_gcp_firewall, single=True), config.update_tag)
+    compute.cleanup_gcp_firewall_rules(session, common_job_parameters)
 
 def start_gcp_ingestion(session, config):
     try:

@@ -145,8 +145,11 @@ def transform_gcp_instances(response_objects):
             instance['project_id'] = prefix_fields.project_id
             instance['zone_name'] = prefix_fields.zone_name
 
-            for nic in instance.get('networkInterfaces', []):
-                nic['subnet_partial_uri'] = _parse_compute_full_uri_to_partial_uri(nic['subnetwork'])
+            for nic in instance.get('networkInterfaces') or instance.get('networkInterface', []):
+                if 'subnet' in nic:
+                    nic['subnet_partial_uri'] = _parse_compute_full_uri_to_partial_uri(nic['subnetwork'])
+                else:
+                    nic['subnet_partial_uri'] = ''
                 nic['vpc_partial_uri'] = _parse_compute_full_uri_to_partial_uri(nic['network'])
 
             instance_list.append(instance)
@@ -310,7 +313,7 @@ def _transform_fw_entry(rule, fw_partial_uri, is_allow_rule):
     """
     result = []
     # rule['ruleid'] = f"{fw_partial_uri}/"
-    protocol = rule['IPProtocol']
+    protocol = rule.get('IPProtocol') or rule['ipProtocol']
 
     # If the protocol covered is TCP or UDP then we need to handle ports
     if protocol == 'tcp' or protocol == 'udp':
@@ -553,6 +556,9 @@ def _attach_instance_tags(neo4j_session, instance, gcp_update_tag):
     ON CREATE SET d.firstseen = timestamp()
     SET d.lastupdated = {gcp_update_tag}
     """
+
+    entry = instance.get('tags', {})
+    tags = entry.get('items') or entry.get('tag', []) # Fix for CAI dumps
     for tag in instance.get('tags', {}).get('items', []):
         for nic in instance.get('networkInterfaces', []):
             tag_id = _create_gcp_network_tag_id(nic['vpc_partial_uri'], tag)
@@ -597,14 +603,14 @@ def _attach_gcp_nics(neo4j_session, instance, gcp_update_tag):
     ON CREATE SET p.firstseen = timestamp()
     SET p.lastupdated = {gcp_update_tag}
     """
-    for nic in instance.get('networkInterfaces', []):
+    for nic in instance.get('networkInterfaces') or instance.get('networkInterface', []):
         # Make an ID for GCPNetworkInterface nodes because GCP doesn't define one but we need to uniquely identify them
         nic_id = f"{instance['partial_uri']}/networkinterfaces/{nic['name']}"
         neo4j_session.run(
             query,
             InstanceId=instance['partial_uri'],
             NicId=nic_id,
-            NetworkIP=nic['networkIP'],
+            NetworkIP=nic.get('networkIP') or nic['ipAddress'],
             NicName=nic['name'],
             gcp_update_tag=gcp_update_tag,
             SubnetPartialUri=nic['subnet_partial_uri']
@@ -637,7 +643,7 @@ def _attach_gcp_nic_access_configs(neo4j_session, nic_id, nic, gcp_update_tag):
     ON CREATE SET r.firstseen = timestamp()
     SET r.lastupdated = {gcp_update_tag}
     """
-    for ac in nic.get('accessConfigs', []):
+    for ac in nic.get('accessConfigs') or nic.get('accessConfig', []):
         # Make an ID for GCPNicAccessConfig nodes because GCP doesn't define one but we need to uniquely identify them
         access_config_id = f"{nic_id}/accessconfigs/{ac['type']}"
         neo4j_session.run(
