@@ -123,6 +123,11 @@ class CLI(object):
                 'jobs are executed.'
             ),
         )
+        parser.add_argument(
+            '--cai-dump-file',
+            type=str,
+            default=None,
+        )
         return parser
 
     def main(self, argv):

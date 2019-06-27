@@ -91,18 +91,41 @@ def _sync_multiple_projects(session, resources, projects, gcp_update_tag, common
         _sync_single_project(session, resources, project_id, gcp_update_tag, common_job_parameters)
 
 
-def start_gcp_ingestion(session, config):
+def start_gcp_crm_ingestion(session, config, credentials):
     """
-    Starts the GCP ingestion process by initializing Google Application Default Credentials, creating the necessary
+    Starts the GCP ingestion process by creating the necessary
     resource objects, listing all GCP organizations and projects available to the GCP identity, and supplying that
     context to all intel modules.
     :param session: The Neo4j session
     :param config: A `cartography.config` object
+    :param credentials: GoogleCredentials
     :return: Nothing
     """
     common_job_parameters = {
         "UPDATE_TAG": config.update_tag,
     }
+    resources = _initialize_resources(credentials)
+
+    # If we don't have perms to pull Orgs or Folders from GCP, we will skip safely
+    crm.sync_gcp_organizations(session, resources.crm_v1, config.update_tag, common_job_parameters)
+    crm.sync_gcp_folders(session, resources.crm_v2, config.update_tag, common_job_parameters)
+
+    projects = crm.get_gcp_projects(resources.crm_v1)
+
+    _sync_multiple_projects(session, resources, projects, config.update_tag, common_job_parameters)
+
+    run_analysis_job(
+        'gcp_compute_asset_inet_exposure.json',
+        session,
+        common_job_parameters
+    )
+
+
+def start_gcp_cai_ingestion(session, config, credentials):
+    print("Cool", config)
+
+
+def start_gcp_ingestion(session, config):
     try:
         # Explicitly use Application Default Credentials.
         # See https://oauth2client.readthedocs.io/en/latest/source/
@@ -120,18 +143,7 @@ def start_gcp_ingestion(session, config):
             e
         )
         return
-    resources = _initialize_resources(credentials)
-
-    # If we don't have perms to pull Orgs or Folders from GCP, we will skip safely
-    crm.sync_gcp_organizations(session, resources.crm_v1, config.update_tag, common_job_parameters)
-    crm.sync_gcp_folders(session, resources.crm_v2, config.update_tag, common_job_parameters)
-
-    projects = crm.get_gcp_projects(resources.crm_v1)
-
-    _sync_multiple_projects(session, resources, projects, config.update_tag, common_job_parameters)
-
-    run_analysis_job(
-        'gcp_compute_asset_inet_exposure.json',
-        session,
-        common_job_parameters
-    )
+    if config.cai_dump_file:
+        start_gcp_cai_ingestion(session, config, credentials)
+    else:
+        start_gcp_crm_ingestion(session, config, credentials)
