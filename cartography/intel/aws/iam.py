@@ -207,10 +207,13 @@ def load_roles(session, roles, current_aws_account_id, aws_update_tag):
 
         for statement in role["AssumeRolePolicyDocument"]["Statement"]:
             principal = statement["Principal"]
+            principal_values = []
             if 'AWS' in principal:
                 principal_type, principal_values = 'AWS', principal['AWS']
             elif 'Service' in principal:
                 principal_type, principal_values = 'Service', principal['Service']
+            elif 'Federated' in principal:
+                principal_type, principal_values = 'Federated', principal['Federated']
             if not isinstance(principal_values, list):
                 principal_values = [principal_values]
             for principal_value in principal_values:
